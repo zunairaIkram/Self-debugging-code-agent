@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Self-debugging code agent</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="topbar">
+        <div class="brand">
+          <div class="mark" aria-hidden="true">SD</div>
+          <div>
+            <p class="kicker">self-debug agent</p>
+            <h1>One function. Plan, test, repair.</h1>
+          </div>
+        </div>
+        <div class="status-pill" id="statusPill" data-state="idle">
+          <span class="pulse"></span>
+          <span id="statusLabel">Idle</span>
+        </div>
+      </header>
+
+      <ol class="pipeline" id="pipeline">
+        <li data-stage="planning">Planning</li>
+        <li data-stage="critiquing">Critiquing</li>
+        <li data-stage="replanning">Replanning</li>
+        <li data-stage="generating_code">Generating code</li>
+        <li data-stage="calling_tool">Calling tool</li>
+        <li data-stage="tests_complete">Tests</li>
+        <li data-stage="done">Final answer</li>
+      </ol>
+
+      <main class="thread" id="thread" role="log" aria-live="polite"></main>
+
+      <footer class="dock">
+        <div class="chips" id="chips">
+          <button type="button" data-prompt="Write a Python function that checks whether a string is a palindrome, ignoring case and spaces.">
+            Palindrome
+          </button>
+          <button type="button" data-prompt="Write a Python function two_sum(nums, target) that returns the indices of two numbers that add up to target.">
+            Two sum
+          </button>
+          <button type="button" data-prompt="Write a Python function fizzbuzz(n) that returns a list of strings from 1 to n using FizzBuzz rules.">
+            FizzBuzz
+          </button>
+          <button type="button" data-prompt="Write a Python function factorial(n) that returns n! for a non-negative integer.">
+            Factorial
+          </button>
+        </div>
+        <form class="composer" id="composer">
+          <label class="sr-only" for="prompt">Coding problem</label>
+          <textarea
+            id="prompt"
+            name="prompt"
+            rows="2"
+            required
+            placeholder="Describe a single-function coding problem…"
+          ></textarea>
+          <button type="submit" id="send">Run agent</button>
+        </form>
+      </footer>
+    </div>
+    <script src="/static/app.js"></script>
+  </body>
+</html>
