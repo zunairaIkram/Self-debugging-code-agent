@@ -8,6 +8,12 @@ from typing import Annotated, Any
 from mcp.server.mcpserver import MCPServer
 from pydantic import BaseModel, Field
 
+from e2b_code_interpreter import Sandbox
+
+import os
+from dotenv import load_dotenv
+load_dotenv()
+
 mcp = MCPServer(
     name="test-code",
     instructions="Exposes test_code: run a Python function against test cases and return JSON pass/fail results.",
@@ -61,27 +67,17 @@ for i, tc in enumerate(test_cases):
 
 print(json.dumps({{"all_passed": all(r["passed"] for r in results), "results": results}}, default=str))
 """
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, encoding="utf-8") as f:
-            f.write(harness)
-            temp_path = f.name
+        sandbox = Sandbox.create(api_key=os.getenv("e2b_api_key"))
         try:
-            proc = subprocess.run(
-                [sys.executable, temp_path],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-        except subprocess.TimeoutExpired:
-            return _error_payload("Execution timed out.")
+            execution = sandbox.run_code(harness, timeout=5)
+            if execution.error:
+                return _error_payload(f"{execution.error.name}: {execution.error.value}")
+            stdout = "".join(execution.logs.stdout).strip()
+            if not stdout:
+                return _error_payload("Harness produced no output.")
+            return stdout
         finally:
-            os.remove(temp_path)
-
-        if proc.returncode != 0:
-            return _error_payload(proc.stderr.strip() or f"Process exited with code {proc.returncode}")
-        stdout = proc.stdout.strip()
-        if not stdout:
-            return _error_payload(proc.stderr.strip() or "Harness produced no output.")
-        return stdout
+            sandbox.kill()
     except Exception as exc:
         return _error_payload(f"{type(exc).__name__}: {exc}")
 
