@@ -2,8 +2,8 @@ from openai import OpenAI
 import json
 from typing import Any, Generator, Optional
 
-from tools import Tools
-from pydanticBlueprints import testCodeArgs, Plan, Critics
+from mcp_client import MCPClient
+from pydanticBlueprints import Plan, Critics
 from dotenv import load_dotenv
 import os
 
@@ -13,9 +13,6 @@ client = OpenAI(api_key=os.getenv("openai_api_key"))
 role = "You are a self debugging code agent."
 context = "When given a coding problem you analyze it check constraints, then generate a pseudocode and related test cases of it. Then on approval you generate code as per that pseudocode and call the required tools to test that code and when all test cases cleared you give the final code to user back."
 constraints = "You can only solve single problems within one file, a single function, if user asks for a bigger problem like a multiple files project or requires multiple functions, you just say it's out of my scope."
-
-with open("tool_declaration.json", "r") as file:
-    tools = json.load(file)
 
 
 def _schema_format(model, name: str) -> dict:
@@ -151,71 +148,76 @@ def run_agent(prompt: str, max_iterations: int = 5, max_replans: int = 3) -> Gen
         },
     ]
 
-    for iteration in range(max_iterations + 1):
-        yield _event(
-            "generating_code",
-            f"Generating {'revised ' if iteration else ''}code from the approved plan…",
-        )
-        response = client.responses.create(
-            model="gpt-4o-mini",
-            input=coding_input,
-            tools=tools,
-            instructions=(
-                f"{role} {context} {constraints} "
-                "Follow the approved plan. Call test_code to run the planned test cases. "
-                "If any test fails, fix the function and call test_code again. "
-                "When all tests pass, return the final code to the user."
-            ),
-            previous_response_id=previous_response_id,
-        )
+    mcp_client = MCPClient()
+    mcp_client.connect()
+    tools = mcp_client.get_tools_json()
+    print(f"MCP TOOLS: {json.dumps(tools, indent=2)}")
 
-        tool_calls = [item for item in response.output if item.type == "function_call"]
-        if not tool_calls:
-            result = response.output_text
-            yield _event("done", "All tests passed. Final answer is ready.", result=result)
-            return result
-
-        print(f"TOOL CALLED: {[c.name for c in tool_calls]}")
-        coding_input = []
-        for call in tool_calls:
+    try:
+        for iteration in range(max_iterations + 1):
             yield _event(
-                "calling_tool",
-                f"Calling `{call.name}` to run the planned test cases…",
-                tool=call.name,
+                "generating_code",
+                f"Generating {'revised ' if iteration else ''}code from the approved plan…",
             )
-            func = Tools.available_functions[call.name]
-            args = json.loads(call.arguments)
-            validated_args = testCodeArgs(**args)
-            call_tool = Tools(
-                code_block=validated_args.codeBlock,
-                test_cases=test_cases,
-                function_name=plan.function_name,
-            )
-            result = func(call_tool)
-            print(f"TEST RESULTS: {result}")
-            try:
-                parsed = json.loads(result)
-            except json.JSONDecodeError:
-                parsed = {"raw": result}
-            yield _event(
-                "tests_complete",
-                "Test runner returned results.",
-                tool=call.name,
-                tests=parsed,
-            )
-            coding_input.append(
-                {
-                    "type": "function_call_output",
-                    "call_id": call.call_id,
-                    "output": result,
-                }
+            response = client.responses.create(
+                model="gpt-4o-mini",
+                input=coding_input,
+                tools=tools,
+                instructions=(
+                    f"{role} {context} {constraints} "
+                    "Follow the approved plan. Call test_code to run the planned test cases. "
+                    "If any test fails, fix the function and call test_code again. "
+                    "When all tests pass, return the final code to the user."
+                ),
+                previous_response_id=previous_response_id,
             )
 
-        previous_response_id = response.id
+            tool_calls = [item for item in response.output if item.type == "function_call"]
+            if not tool_calls:
+                result = response.output_text
+                yield _event("done", "All tests passed. Final answer is ready.", result=result)
+                return result
 
-    final = "Maximum iterations reached"
-    yield _event("error", "Stopped after the iteration budget.", result=final)
-    return final
+            print(f"TOOL CALLED: {[c.name for c in tool_calls]}")
+            coding_input = []
+            for call in tool_calls:
+                yield _event(
+                    "calling_tool",
+                    f"Calling `{call.name}` to run the planned test cases…",
+                    tool=call.name,
+                )
+                args = json.loads(call.arguments)
+                if "code_block" not in args and "codeBlock" in args:
+                    args["code_block"] = args["codeBlock"]
+                args["function_name"] = plan.function_name
+                args["test_cases"] = [tc.model_dump() for tc in test_cases]
+                result = mcp_client.call_tool(call.name, args)
+                print(f"TEST RESULTS: {result}")
+                try:
+                    parsed = json.loads(result)
+                except json.JSONDecodeError:
+                    parsed = {"raw": result}
+                yield _event(
+                    "tests_complete",
+                    "Test runner returned results.",
+                    tool=call.name,
+                    tests=parsed,
+                )
+                coding_input.append(
+                    {
+                        "type": "function_call_output",
+                        "call_id": call.call_id,
+                        "output": result,
+                    }
+                )
+
+            previous_response_id = response.id
+
+        final = "Maximum iterations reached"
+        yield _event("error", "Stopped after the iteration budget.", result=final)
+        return final
+    finally:
+        mcp_client.close()
 
 
 def agent(prompt: str, max_iterations=5, max_replans=3):
